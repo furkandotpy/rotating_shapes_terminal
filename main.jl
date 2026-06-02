@@ -29,6 +29,33 @@ function generate_cube_vertices()
     return linespaces    
 end
 
+function generate_torus_vertices()
+    points = Vector{Float64}[]
+    
+    # Configuration for the torus geometry
+    R = 12.0  # Major radius (distance from center to core of tube)
+    r = 5.0   # Minor radius (radius of the tube)
+    
+    # Sampling density (higher means more points/denser render)
+    theta_step = 0.15
+    phi_step = 0.05
+    
+    # 1. Sweep phi around the main circle (0 to 2π)
+    for phi in 0:phi_step:2π
+        # 2. Sweep theta around the cross-section tube (0 to 2π)
+        for theta in 0:theta_step:2π
+            
+            # Parametric equations for a torus
+            x = (R + r * cos(theta)) * cos(phi)
+            y = (R + r * cos(theta)) * sin(phi)
+            z = r * sin(theta)
+            
+            push!(points, [x, y, z])
+        end
+    end
+    
+    return points
+end
 
 function rotate_lines(linespaces, theta_1, theta_2, theta_3)
     rot_x = RotX(theta_1)
@@ -36,7 +63,7 @@ function rotate_lines(linespaces, theta_1, theta_2, theta_3)
     rot_z = RotZ(theta_3)
 
     for index in eachindex(linespaces)
-        linespaces[index] = rot_x * rot_y * rot_y * linespaces[index]
+        linespaces[index] = collect(rot_x * rot_y * rot_y * linespaces[index])
     end
     return linespaces
 end
@@ -90,7 +117,7 @@ end
 
 
 function animate(buffer)
-    vertices = generate_cube_vertices()
+    vertices = generate_torus_vertices()
 
     print("\e[?1049h")
     try
