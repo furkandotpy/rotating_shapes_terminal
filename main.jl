@@ -36,9 +36,7 @@ function rotate_lines(linespaces, theta_1, theta_2, theta_3)
     rot_z = RotZ(theta_3)
 
     for index in eachindex(linespaces)
-        linespaces[index] = rot_x * linespaces[index]
-        linespaces[index] = rot_y * linespaces[index]
-        linespaces[index] = rot_z * linespaces[index]
+        linespaces[index] = rot_x * rot_y * rot_y * linespaces[index]
     end
     return linespaces
 end
@@ -46,7 +44,7 @@ end
 
 function transform_lines_to_buffer_coords_continuous(linespaces, rows, cols, z_offset)
     for index in eachindex(linespaces)
-        linespaces[index] += [rows//2 - 1, cols//2 - 1, z_offset]
+        linespaces[index] += [0, 0, z_offset]
     end
     return linespaces
 end
@@ -58,7 +56,8 @@ function write_lines_into_buffer_discrete(buffer, linespaces)
     
     # Perspective projection constant (how "deep" the field of view is)
     f = 10.0 
-
+    aspect_ratio = 2
+    
     for point in linespaces
         # 1. Perspective Projection: x' = x * f / z
         # We add a small constant to z to avoid division by zero
@@ -66,8 +65,8 @@ function write_lines_into_buffer_discrete(buffer, linespaces)
         
         # 2. Project and scale
         # We map -5 to 5 space into a visible screen space
-        r_proj = Int(round(point[1] * f / z_depth))
-        c_proj = Int(round(point[2] * f / z_depth))
+        r_proj = Int(round(point[1] * f / z_depth + rows/2))
+        c_proj = Int(round(point[2] * f / z_depth * aspect_ratio + cols/2))
         
         # 3. Bounds check
         if 1 <= r_proj <= rows && 1 <= c_proj <= cols
@@ -96,14 +95,15 @@ function animate(buffer)
     print("\e[?1049h")
     try
         print("\e[?25l")
-        for i in 1:100
+        for i in 1:1000
             print("\e[H") 
             println("Animating Cube Frame: $i\n\n")
-            linespaces_buffer_coords = transform_lines_to_buffer_coords_continuous(vertices, rows, cols, z_offset)
-            buffer = write_lines_into_buffer_discrete(buffer, linespaces_buffer_coords)
+            transformed_coords = deepcopy(vertices)
+            transform_lines_to_buffer_coords_continuous(transformed_coords, rows, cols, z_offset)
+            buffer = write_lines_into_buffer_discrete(buffer, transformed_coords)
             print_buffer(buffer)
-            vertices = rotate_lines(vertices, 1, 1, 1)
-            sleep(1.0)
+            vertices = rotate_lines(vertices, 0.1, 0.0, 0.0)
+            sleep(0.01)
         end
         
     finally
@@ -112,9 +112,9 @@ function animate(buffer)
     end
 end
 
-rows, cols = 30, 30
+rows, cols = 30, 100
 z_offset = 30
-height, width, depth = 5, 5, 5
+height, width, depth = 15, 15, 15
 
 buffer = fill(' ', rows, cols)
 
