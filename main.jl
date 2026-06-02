@@ -2,146 +2,131 @@ using Base: indexoffset
 using LinearAlgebra
 using Rotations
 
+include("shapes.jl")
 
-function generate_cube_vertices()
-
-    linespace_1 =  [[  i, -width,  depth] for i in range(-height, height)] 
-    linespace_2 =  [[  i, -width, -depth] for i in range(-height, height)]
-    linespace_3 =  [[  i,  width,  depth] for i in range(-height, height)]
-    linespace_4 =  [[  i,  width, -depth] for i in range(-height, height)]
-    
-    linespace_5 =  [[-height,  i, -depth] for i in range(-width, width)]
-    linespace_6 =  [[-height,  i,  depth] for i in range(-width, width)]
-    linespace_7 =  [[ height,  i, -depth] for i in range(-width, width)]
-    linespace_8 =  [[ height,  i,  depth] for i in range(-width, width)]
-
-    linespace_9 =  [[-height, -width,  i] for i in range(-depth, depth)]
-    linespace_10 = [[-height,  width,  i] for i in range(-depth, depth)]
-    linespace_11 = [[ height, -width,  i] for i in range(-depth, depth)]
-    linespace_12 = [[ height,  width,  i] for i in range(-depth, depth)]
-
-    linespaces = Vector{Float64}.(vcat(
-        linespace_1,  linespace_2,  linespace_3,
-        linespace_4,  linespace_5,  linespace_6,
-        linespace_7,  linespace_8,  linespace_9,
-        linespace_10, linespace_11, linespace_12
-    ))
-    return linespaces    
-end
-
-function generate_torus_vertices()
-    points = Vector{Float64}[]
-    
-    # Configuration for the torus geometry
-    R = 12.0  # Major radius (distance from center to core of tube)
-    r = 5.0   # Minor radius (radius of the tube)
-    
-    # Sampling density (higher means more points/denser render)
-    theta_step = 0.15
-    phi_step = 0.05
-    
-    # 1. Sweep phi around the main circle (0 to 2π)
-    for phi in 0:phi_step:2π
-        # 2. Sweep theta around the cross-section tube (0 to 2π)
-        for theta in 0:theta_step:2π
-            
-            # Parametric equations for a torus
-            x = (R + r * cos(theta)) * cos(phi)
-            y = (R + r * cos(theta)) * sin(phi)
-            z = r * sin(theta)
-            
-            push!(points, [x, y, z])
-        end
-    end
-    
-    return points
-end
 
 function rotate_lines(linespaces, theta_1, theta_2, theta_3)
     rot_x = RotX(theta_1)
     rot_y = RotY(theta_2)
     rot_z = RotZ(theta_3)
 
+    # Cleaned up rotation order to match your intent
+    combined_rot = rot_z * rot_y * rot_x
+
     for index in eachindex(linespaces)
-        linespaces[index] = collect(rot_x * rot_y * rot_y * linespaces[index])
+        linespaces[index] = collect(combined_rot * linespaces[index])
     end
     return linespaces
 end
-
 
 function transform_lines_to_buffer_coords_continuous(linespaces, rows, cols, z_offset)
     for index in eachindex(linespaces)
-        linespaces[index] += [0, 0, z_offset]
+        linespaces[index] += [0.0, 0.0, z_offset]
     end
     return linespaces
 end
-
 
 function write_lines_into_buffer_discrete(buffer, linespaces)
     fill!(buffer, ' ')
     rows, cols = size(buffer)
+    depth_buffer = zeros(Float64, rows, cols)
     
-    # Perspective projection constant (how "deep" the field of view is)
     f = 10.0 
-    aspect_ratio = 2
+    aspect_ratio = 2.2
+    
+    # Unified character ramp
+    luminance_chars = ".,-~:;=!*#@"
     
     for point in linespaces
-        # 1. Perspective Projection: x' = x * f / z
-        # We add a small constant to z to avoid division by zero
-        z_depth = point[3] + 1e-10
+        z_depth = point[3]
+        if z_depth <= 0 continue end
         
-        # 2. Project and scale
-        # We map -5 to 5 space into a visible screen space
-        r_proj = Int(round(point[1] * f / z_depth + rows/2))
-        c_proj = Int(round(point[2] * f / z_depth * aspect_ratio + cols/2))
+        r_proj = Int(round(point[1] * f / z_depth + rows / 2))
+        c_proj = Int(round((point[2] * f / z_depth) * aspect_ratio + cols / 2))
         
-        # 3. Bounds check
         if 1 <= r_proj <= rows && 1 <= c_proj <= cols
-            buffer[r_proj, c_proj] = '#'
+            ooz = 1.0 / z_depth
+            
+            if ooz > depth_buffer[r_proj, c_proj]
+                depth_buffer[r_proj, c_proj] = ooz
+                
+                # Dynamic scaling index based on your z-depth layer (ooz ranges from ~0.028 to ~0.04)
+                idx = Int(clamp(round((ooz - 0.025) * 600), 1, length(luminance_chars)))
+                
+                buffer[r_proj, c_proj] = luminance_chars[idx]
+            end
         end
     end
 
     return buffer
 end
 
+function get_color_string(idx, max_idx)
+    frequency = (Float64(idx) / Float64(max_idx)) * 2π 
+    
+    r = Int(clamp(round(sin(frequency) * 127.0 + 128.0), 0, 255))
+    g = Int(clamp(round(sin(frequency + 2π/3) * 127.0 + 128.0), 0, 255))
+    b = Int(clamp(round(sin(frequency + 4π/3) * 127.0 + 128.0), 0, 255))
+    
+    return "\e[38;2;$(r);$(g);$(b)m"
+end
 
 function print_buffer(buffer)
+    # Uses the same matched 11-char string
+    luminance_chars = ".,-~:;=!*#@"
+    max_idx = length(luminance_chars)
+    
     for y in 1:size(buffer, 1)
         for x in 1:size(buffer, 2)
-            print(buffer[y, x])
+            char = buffer[y, x]
+            
+            if char == ' '
+                print(' ')
+            else
+                idx = something(findfirst(==(char), luminance_chars), 1)
+                color_code = get_color_string(idx, max_idx)
+                print(color_code, char, "\e[0m")
+            end
         end
         print("\n")
     end
-    
 end
 
-
 function animate(buffer)
-    vertices = generate_torus_vertices()
+    vertices = generate_hyperboloid_vertices()
 
-    print("\e[?1049h")
+    print("\e[?1049h") # Alternate screen buffer on
     try
-        print("\e[?25l")
-        for i in 1:1000
+        print("\e[?25l") # Hide cursor
+        for i in 1:num_frames
             print("\e[H") 
-            println("Animating Cube Frame: $i\n\n")
+            println("Animating Torus Frame: $i\n\n")
+            
             transformed_coords = deepcopy(vertices)
             transform_lines_to_buffer_coords_continuous(transformed_coords, rows, cols, z_offset)
             buffer = write_lines_into_buffer_discrete(buffer, transformed_coords)
+
+            theta_1 = 1/5 * sin(2 * i * trig_factor)
+            theta_2 = 1/7 * sin(i * trig_factor)
+            theta_3 = 1/10 # * cos(1/3 * i * trig_factor)
+            
             print_buffer(buffer)
-            vertices = rotate_lines(vertices, 0.1, 0.0, 0.0)
+        
+            vertices = rotate_lines(vertices, theta_1, theta_2, theta_3)
             sleep(0.01)
         end
         
     finally
-        print("\e[?25h")
-        print("\e[?1049l")
+        print("\e[?25h")  # Show cursor
+        print("\e[?1049l") # Alternate screen buffer off
     end
 end
 
 rows, cols = 30, 100
 z_offset = 30
 height, width, depth = 15, 15, 15
+num_frames = 300
+trig_factor = 1/num_frames * 2 * 3.14159265
 
 buffer = fill(' ', rows, cols)
 
